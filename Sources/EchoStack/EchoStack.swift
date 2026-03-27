@@ -7,6 +7,10 @@
 
 import Foundation
 
+#if canImport(SuperwallKit)
+import SuperwallKit
+#endif
+
 /// Log level for SDK internal logging.
 public enum EchoStackLogLevel: Int {
     case none = 0
@@ -232,6 +236,112 @@ public final class EchoStack: @unchecked Sendable {
             eventAt: Date()
         )
         eventQueue?.enqueue(event)
+    }
+
+    // MARK: - RevenueCat Integration
+
+    /// Pass EchoStack attribution data to RevenueCat for campaign-based paywall targeting.
+    /// Call after both EchoStack and RevenueCat Purchases SDKs are configured.
+    ///
+    /// Sets subscriber attributes so RevenueCat can segment users by acquisition source:
+    /// - `$echoStackId` — EchoStack device ID
+    /// - `$mediaSource` — attributed ad network (e.g., "meta", "google")
+    /// - `$campaign` — campaign name
+    /// - `$adGroup` — ad set / ad group ID
+    /// - `$ad` — ad creative ID
+    /// - `$keyword` — search keyword (if applicable)
+    ///
+    /// TODO(partnership): When EchoStack becomes a recognized RevenueCat integration partner,
+    /// replace custom attributes with Purchases.shared.attribution.setEchoStackAttributionParams()
+    public static func syncWithRevenueCat() {
+        let instance = EchoStack.shared
+
+        guard instance.isConfigured, !instance._isSdkDisabled else {
+            Logger.shared.warning("SDK not configured or disabled. Cannot sync with RevenueCat.")
+            return
+        }
+
+        #if canImport(RevenueCat)
+        import RevenueCat
+
+        var attributes: [String: String] = [:]
+
+        if let echoStackId = instance.getEchoStackId() {
+            attributes["$echoStackId"] = echoStackId
+        }
+
+        if let attribution = instance.getAttributionParams() {
+            if let network = attribution["network"] as? String {
+                attributes["$mediaSource"] = network
+            }
+            if let campaign = attribution["campaign_name"] as? String {
+                attributes["$campaign"] = campaign
+            }
+            if let adGroup = attribution["adset_id"] as? String {
+                attributes["$adGroup"] = adGroup
+            }
+            if let ad = attribution["ad_id"] as? String {
+                attributes["$ad"] = ad
+            }
+            if let keyword = attribution["keyword"] as? String {
+                attributes["$keyword"] = keyword
+            }
+        }
+
+        guard !attributes.isEmpty else {
+            Logger.shared.debug("No attribution data to sync with RevenueCat.")
+            return
+        }
+
+        // TODO(partnership): Replace with Purchases.shared.attribution.setEchoStackAttributionParams(attributes)
+        Purchases.shared.attribution.setAttributes(attributes)
+        Logger.shared.debug("Synced \(attributes.count) attributes with RevenueCat.")
+        #else
+        Logger.shared.warning("RevenueCat SDK not found. Add the RevenueCat dependency to use syncWithRevenueCat().")
+        #endif
+    }
+
+    // MARK: - Superwall Integration
+
+    /// Sync EchoStack attribution with Superwall for campaign-targeted paywalls.
+    /// Call after both SDKs are configured, before first `Superwall.register()` call.
+    ///
+    /// Sets the following Superwall user attributes:
+    /// - `echostack_id`: The unique device installation ID.
+    /// - Attribution parameters (network, campaign_id, campaign_name, etc.) when available.
+    ///
+    /// Requires `SuperwallKit` to be linked in the host app. This is a no-op if
+    /// SuperwallKit is not available.
+    ///
+    /// - TODO(partnership): When EchoStack is a recognized Superwall partner, use
+    ///   `Superwall.shared.setIntegrationAttribute(IntegrationAttribute.echoStackId, ...)` instead.
+    public static func syncWithSuperwall() {
+        let instance = EchoStack.shared
+
+        guard instance.isConfigured, !instance._isSdkDisabled else {
+            Logger.shared.warning("SDK not configured or disabled. Cannot sync with Superwall.")
+            return
+        }
+
+        guard let echoStackId = instance.getEchoStackId() else {
+            Logger.shared.warning("EchoStack ID not available. Cannot sync with Superwall.")
+            return
+        }
+
+        #if canImport(SuperwallKit)
+        // TODO(partnership): Replace with Superwall.shared.setIntegrationAttribute(IntegrationAttribute.echoStackId, echoStackId)
+        Superwall.shared.setUserAttributes(["echostack_id": echoStackId])
+        Logger.shared.debug("Superwall: set echostack_id")
+
+        // Forward attribution parameters if available
+        if let attribution = instance.getAttributionParams() {
+            // TODO(partnership): Replace with Superwall.shared.setIntegrationAttribute() calls
+            Superwall.shared.setUserAttributes(attribution)
+            Logger.shared.debug("Superwall: set attribution params (\(attribution.count) keys)")
+        }
+        #else
+        Logger.shared.debug("SuperwallKit not available. Skipping Superwall sync.")
+        #endif
     }
 
     /// Disable the SDK (called internally on 401 or fatal errors).
