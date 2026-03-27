@@ -8,21 +8,18 @@
 //  entirely server-side. The redirect service captures click IDs when users tap ad links,
 //  stores them in Redis/PostgreSQL, and the matching engine correlates them with install
 //  pings using the device fingerprint. The SDK's role is to provide the device fingerprint
-//  and (optionally) the Apple attribution token — it does not perform matching on-device.
+//  and IDFA (when authorized) — it does not perform matching on-device.
 //
 
 import Foundation
 import StoreKit
-
-#if canImport(AdServices)
-import AdServices
-#endif
 
 final class AttributionManager: @unchecked Sendable {
 
     private let deviceManager: DeviceManager
     private let networkClient: NetworkClient
     private let configuration: Configuration
+    private let advertisingManager: AdvertisingManager?
 
     /// Cached attribution result, available after install ping completes.
     private(set) var cachedAttribution: [String: Any]?
@@ -33,10 +30,16 @@ final class AttributionManager: @unchecked Sendable {
     private let cacheKey = "echostack_attribution_cache"
     private let mappingKey = "echostack_cv_mapping"
 
-    init(deviceManager: DeviceManager, networkClient: NetworkClient, configuration: Configuration) {
+    init(
+        deviceManager: DeviceManager,
+        networkClient: NetworkClient,
+        configuration: Configuration,
+        advertisingManager: AdvertisingManager? = nil
+    ) {
         self.deviceManager = deviceManager
         self.networkClient = networkClient
         self.configuration = configuration
+        self.advertisingManager = advertisingManager
 
         // Load cached attribution from UserDefaults
         if let cached = UserDefaults.standard.dictionary(forKey: cacheKey) {
@@ -60,9 +63,10 @@ final class AttributionManager: @unchecked Sendable {
             "fingerprint": fingerprint,
         ]
 
-        // Include Apple attribution token if available
-        if let token = await fetchAppleAttributionToken() {
-            payload["apple_attribution_token"] = token
+        // Include IDFA when ATT is authorized (already in fingerprint, also top-level for convenience)
+        if let idfa = advertisingManager?.idfa {
+            payload["idfa"] = idfa
+            Logger.shared.debug("Including IDFA in install ping")
         }
 
         Logger.shared.debug("Sending install ping...")
@@ -108,29 +112,4 @@ final class AttributionManager: @unchecked Sendable {
         }
     }
 
-    // MARK: - Apple Attribution Token (AdServices)
-
-    /// Fetch the Apple Search Ads attribution token via the AdServices framework (iOS 14.3+).
-    /// The token is sent to the backend as `apple_attribution_token` in the install ping.
-    /// The backend exchanges this token with Apple's Attribution API to get campaign-level data.
-    ///
-    /// We do NOT read from the clipboard — that approach is deprecated, creates bad UX
-    /// (iOS shows a paste permission prompt), and is unnecessary with AdServices available.
-    private func fetchAppleAttributionToken() async -> String? {
-        #if canImport(AdServices)
-        guard #available(iOS 14.3, *) else { return nil }
-
-        do {
-            let token = try AAAttribution.attributionToken()
-            Logger.shared.debug("Obtained Apple attribution token (\(token.prefix(20))...)")
-            return token
-        } catch {
-            Logger.shared.debug("AdServices attribution token unavailable: \(error.localizedDescription)")
-            return nil
-        }
-        #else
-        Logger.shared.debug("AdServices framework not available on this platform")
-        return nil
-        #endif
-    }
 }

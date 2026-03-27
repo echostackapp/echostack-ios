@@ -49,6 +49,7 @@ public final class EchoStack: @unchecked Sendable {
     private var networkClient: NetworkClient?
     private var attributionManager: AttributionManager?
     private var eventQueue: EventQueue?
+    private var advertisingManager: AdvertisingManager?
 
     private var isConfigured = false
     private var _isSdkDisabled = false
@@ -90,7 +91,10 @@ public final class EchoStack: @unchecked Sendable {
         let config = Configuration(apiKey: apiKey, serverURL: serverURL, logLevel: logLevel)
         self.configuration = config
 
-        let device = DeviceManager()
+        let advertising = AdvertisingManager()
+        self.advertisingManager = advertising
+
+        let device = DeviceManager(advertisingManager: advertising)
         self.deviceManager = device
 
         let network = NetworkClient(configuration: config)
@@ -99,7 +103,8 @@ public final class EchoStack: @unchecked Sendable {
         let attribution = AttributionManager(
             deviceManager: device,
             networkClient: network,
-            configuration: config
+            configuration: config,
+            advertisingManager: advertising
         )
         self.attributionManager = attribution
 
@@ -129,6 +134,36 @@ public final class EchoStack: @unchecked Sendable {
     /// Check if the SDK is disabled (invalid key, fatal error, etc.).
     public func isSdkDisabled() -> Bool {
         return _isSdkDisabled
+    }
+
+    // MARK: - IDFA / App Tracking Transparency
+
+    /// Returns the IDFA (Identifier for Advertisers) if ATT is authorized, nil otherwise.
+    /// Call `requestTrackingAuthorization` first to prompt the user.
+    public func getIDFA() -> String? {
+        return advertisingManager?.idfa
+    }
+
+    /// Request App Tracking Transparency authorization from the user.
+    /// The host app should call this at an appropriate time (e.g., after onboarding).
+    /// The SDK never auto-prompts.
+    ///
+    /// - Parameter completion: Called on the main thread with `true` if authorized.
+    public func requestTrackingAuthorization(completion: @escaping (Bool) -> Void) {
+        guard let advertising = advertisingManager else {
+            Logger.shared.warning("SDK not configured. Cannot request tracking authorization.")
+            DispatchQueue.main.async {
+                completion(false)
+            }
+            return
+        }
+
+        advertising.requestTrackingAuthorization { authorized in
+            if authorized {
+                Logger.shared.debug("Tracking authorized — IDFA: \(advertising.idfa ?? "nil")")
+            }
+            completion(authorized)
+        }
     }
 
     /// Send an in-app event. Events are queued locally and flushed in batches.

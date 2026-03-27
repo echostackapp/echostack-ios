@@ -13,8 +13,12 @@ final class DeviceManager: @unchecked Sendable {
     /// Unique device ID, persisted in Keychain across app reinstalls.
     let echoStackId: String
 
-    init() {
+    /// Advertising manager for IDFA collection.
+    private let advertisingManager: AdvertisingManager?
+
+    init(advertisingManager: AdvertisingManager? = nil) {
         self.echoStackId = Self.loadOrCreateDeviceId()
+        self.advertisingManager = advertisingManager
     }
 
     // MARK: - Device Fingerprint
@@ -37,6 +41,10 @@ final class DeviceManager: @unchecked Sendable {
 
         if let idfv = device.identifierForVendor?.uuidString {
             fingerprint["idfv"] = idfv
+        }
+
+        if let idfa = advertisingManager?.idfa {
+            fingerprint["idfa"] = idfa
         }
 
         return fingerprint
