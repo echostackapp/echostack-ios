@@ -4,9 +4,19 @@
 //
 //  Handles install ping, caches attribution result, manages SKAN conversion values.
 //
+//  NOTE: Deterministic attribution (click ID matching via fbclid/gclid/ttclid) happens
+//  entirely server-side. The redirect service captures click IDs when users tap ad links,
+//  stores them in Redis/PostgreSQL, and the matching engine correlates them with install
+//  pings using the device fingerprint. The SDK's role is to provide the device fingerprint
+//  and (optionally) the Apple attribution token — it does not perform matching on-device.
+//
 
 import Foundation
 import StoreKit
+
+#if canImport(AdServices)
+import AdServices
+#endif
 
 final class AttributionManager: @unchecked Sendable {
 
@@ -98,27 +108,29 @@ final class AttributionManager: @unchecked Sendable {
         }
     }
 
-    // MARK: - Apple Attribution Token
+    // MARK: - Apple Attribution Token (AdServices)
 
+    /// Fetch the Apple Search Ads attribution token via the AdServices framework (iOS 14.3+).
+    /// The token is sent to the backend as `apple_attribution_token` in the install ping.
+    /// The backend exchanges this token with Apple's Attribution API to get campaign-level data.
+    ///
+    /// We do NOT read from the clipboard — that approach is deprecated, creates bad UX
+    /// (iOS shows a paste permission prompt), and is unnecessary with AdServices available.
     private func fetchAppleAttributionToken() async -> String? {
+        #if canImport(AdServices)
         guard #available(iOS 14.3, *) else { return nil }
 
-        // AdServices framework — dynamic loading to avoid hard dependency
-        guard let adServicesClass = NSClassFromString("AAAttribution") else {
-            Logger.shared.debug("AdServices framework not available")
+        do {
+            let token = try AAAttribution.attributionToken()
+            Logger.shared.debug("Obtained Apple attribution token (\(token.prefix(20))...)")
+            return token
+        } catch {
+            Logger.shared.debug("AdServices attribution token unavailable: \(error.localizedDescription)")
             return nil
         }
-
-        // Use performSelector to call attributionToken() dynamically
-        let selector = NSSelectorFromString("attributionToken")
-        guard adServicesClass.responds(to: selector) else { return nil }
-
-        do {
-            if let token = adServicesClass.perform(selector)?.takeUnretainedValue() as? String {
-                return token
-            }
-        }
-
+        #else
+        Logger.shared.debug("AdServices framework not available on this platform")
         return nil
+        #endif
     }
 }
