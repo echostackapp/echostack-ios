@@ -14,6 +14,10 @@
 import Foundation
 import StoreKit
 
+#if canImport(AdServices)
+import AdServices
+#endif
+
 final class AttributionManager: @unchecked Sendable {
 
     private let deviceManager: DeviceManager
@@ -26,6 +30,12 @@ final class AttributionManager: @unchecked Sendable {
 
     /// SKAN conversion value mapping from server.
     private var conversionValueMapping: [String: Int] = [:]
+
+    /// Apple Ads attribution token fetched via AdServices.
+    private(set) var appleAttributionToken: String?
+
+    /// Whether Apple Ads attribution has been enabled.
+    private var appleAdsEnabled = false
 
     private let cacheKey = "echostack_attribution_cache"
     private let mappingKey = "echostack_cv_mapping"
@@ -52,10 +62,43 @@ final class AttributionManager: @unchecked Sendable {
         }
     }
 
+    // MARK: - Apple Ads Attribution (AdServices)
+
+    /// Enable Apple Ads attribution. Fetches the AdServices attribution token on iOS 14.3+.
+    func enableAppleAdsAttribution() {
+        appleAdsEnabled = true
+        fetchAppleAttributionToken()
+    }
+
+    /// Fetch Apple Ads attribution token via AdServices framework.
+    /// Fails silently when AdServices is unavailable or the call errors.
+    private func fetchAppleAttributionToken() {
+        #if canImport(AdServices)
+        if #available(iOS 14.3, *) {
+            do {
+                let token = try AAAttribution.attributionToken()
+                appleAttributionToken = token
+                Logger.shared.debug("Apple Ads attribution token fetched (\(token.prefix(16))...)")
+            } catch {
+                Logger.shared.warning("Failed to fetch Apple Ads attribution token: \(error.localizedDescription)")
+            }
+        } else {
+            Logger.shared.debug("AdServices requires iOS 14.3+ — skipping Apple Ads attribution")
+        }
+        #else
+        Logger.shared.debug("AdServices framework not available — skipping Apple Ads attribution")
+        #endif
+    }
+
     // MARK: - Install Ping
 
     /// Send install ping to server. Called on every cold start; server handles dedup.
     func sendInstallPing() async {
+        // If Apple Ads is enabled but token not yet fetched, try once more before sending
+        if appleAdsEnabled && appleAttributionToken == nil {
+            fetchAppleAttributionToken()
+        }
+
         let fingerprint = deviceManager.collectFingerprint()
 
         var payload: [String: Any] = [
@@ -67,6 +110,12 @@ final class AttributionManager: @unchecked Sendable {
         if let idfa = advertisingManager?.idfa {
             payload["idfa"] = idfa
             Logger.shared.debug("Including IDFA in install ping")
+        }
+
+        // Include Apple Ads attribution token when available
+        if let token = appleAttributionToken {
+            payload["apple_attribution_token"] = token
+            Logger.shared.debug("Including Apple Ads attribution token in install ping")
         }
 
         Logger.shared.debug("Sending install ping...")

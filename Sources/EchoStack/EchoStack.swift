@@ -24,6 +24,19 @@ public enum EventType: String {
     case subscribe
     case adImpression = "ad_impression"
     case adClick = "ad_click"
+    case login
+    case signUp = "sign_up"
+    case register
+    case addToCart = "add_to_cart"
+    case addToWishlist = "add_to_wishlist"
+    case initiateCheckout = "initiate_checkout"
+    case levelStart = "level_start"
+    case levelComplete = "level_complete"
+    case tutorialComplete = "tutorial_complete"
+    case search
+    case viewItem = "view_item"
+    case viewContent = "view_content"
+    case share
     case custom
 }
 
@@ -134,6 +147,21 @@ public final class EchoStack: @unchecked Sendable {
     /// Check if the SDK is disabled (invalid key, fatal error, etc.).
     public func isSdkDisabled() -> Bool {
         return _isSdkDisabled
+    }
+
+    // MARK: - Apple Ads Attribution
+
+    /// Enable Apple Ads attribution via the AdServices framework.
+    /// Fetches an attribution token on iOS 14.3+ and includes it in the install ping payload.
+    /// Safe to call even if AdServices is unavailable — fails silently.
+    public func enableAppleAdsAttribution() {
+        guard isConfigured, !_isSdkDisabled else {
+            Logger.shared.warning("SDK not configured or disabled. Cannot enable Apple Ads attribution.")
+            return
+        }
+
+        attributionManager?.enableAppleAdsAttribution()
+        Logger.shared.debug("Apple Ads attribution enabled")
     }
 
     // MARK: - IDFA / App Tracking Transparency
